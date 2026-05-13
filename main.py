@@ -3,7 +3,7 @@ import sys
 import logging
 import json
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import aiohttp
 from typing import Optional, Any, Dict, Tuple
 
@@ -17,6 +17,7 @@ intents.message_content = True
 class JulesBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
+        self.active_sessions: Dict[str, Dict[str, Any]] = {} # session_id -> {"thread_id": int, "last_state": str}
 
     async def setup_hook(self):
         guild_id_str = os.environ.get("DISCORD_GUILD_ID")
@@ -32,6 +33,53 @@ class JulesBot(commands.Bot):
         else:
             await self.tree.sync()
             logger.info("Synced commands globally")
+
+        self.poll_sessions.start()
+
+    @tasks.loop(minutes=1)
+    async def poll_sessions(self):
+        if not self.active_sessions:
+            return
+
+        api_key = os.environ.get("JULES_API_KEY")
+        if not api_key:
+            return
+
+        headers = {"x-goog-api-key": api_key}
+
+        async with aiohttp.ClientSession() as session:
+            # Create a copy of keys to safely remove items during iteration
+            for session_id in list(self.active_sessions.keys()):
+                info = self.active_sessions[session_id]
+                url = f"https://jules.googleapis.com/v1alpha/sessions/{session_id}"
+
+                try:
+                    async with session.get(url, headers=headers) as response:
+                        if response.status != 200:
+                            continue
+
+                        data = await response.json()
+                        new_state = data.get("state")
+
+                        if new_state and new_state != info["last_state"]:
+                            self.active_sessions[session_id]["last_state"] = new_state
+
+                            # Notify the thread
+                            thread = self.get_channel(info["thread_id"])
+                            if thread and isinstance(thread, discord.Thread):
+                                msg = f"セッションの状態が更新されました: **{info['last_state']}** ➡️ **{new_state}**"
+                                await thread.send(f"{msg}\n{format_json_response(data)}")
+
+                            # Stop tracking if terminal state
+                            if new_state in ["COMPLETED", "FAILED"]:
+                                del self.active_sessions[session_id]
+
+                except Exception as e:
+                    logger.error(f"Error polling session {session_id}: {e}")
+
+    @poll_sessions.before_loop
+    async def before_poll_sessions(self):
+        await self.wait_until_ready()
 
 client = JulesBot()
 
@@ -137,6 +185,12 @@ async def create_a_session(interaction: discord.Interaction, prompt: str, title:
     try:
         thread = await message.create_thread(name=f"Session: {session_id}")
         await thread.send(format_json_response(json_resp))
+
+        # Track session for polling
+        state = json_resp.get("state", "QUEUED")
+        if state not in ["COMPLETED", "FAILED"]:
+            client.active_sessions[session_id] = {"thread_id": thread.id, "last_state": state}
+
     except Exception as e:
         await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
 
@@ -162,6 +216,12 @@ async def get_a_session(interaction: discord.Interaction, session_id: str):
     try:
         thread = await message.create_thread(name=f"Session: {session_id}")
         await thread.send(format_json_response(json_resp))
+
+        # Track session for polling
+        state = json_resp.get("state", "QUEUED")
+        if state not in ["COMPLETED", "FAILED"]:
+            client.active_sessions[session_id] = {"thread_id": thread.id, "last_state": state}
+
     except Exception as e:
         await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
 
@@ -170,6 +230,9 @@ async def delete_a_session(interaction: discord.Interaction, session_id: str):
     text_data, _ = await make_jules_api_request(interaction, "DELETE", f"sessions/{session_id}")
     if text_data is not None:
         await interaction.followup.send(f"セッション {session_id} を削除しました。")
+        # Untrack session
+        if session_id in client.active_sessions:
+            del client.active_sessions[session_id]
 
 @client.tree.command(name="send-a-message", description="Send a message to an active Jules session")
 async def send_a_message(interaction: discord.Interaction, prompt: str):
