@@ -100,7 +100,7 @@ client = JulesBot()
 async def on_ready():
     logger.info(f'We have logged in as {client.user}')
 
-def format_json_response(data: Any) -> str:
+def format_json_response(data: Any, max_length: int = 2000) -> str:
     if isinstance(data, str):
         try:
             data = json.loads(data)
@@ -112,9 +112,13 @@ def format_json_response(data: Any) -> str:
     else:
         formatted_str = str(data)
 
+    # 切り詰め前の全内容をログに出力
+    logger.info(f"Full JSON response: {formatted_str}")
+
     formatted_response = f"```json\n{formatted_str}\n```"
-    if len(formatted_response) > 2000:
-        truncated_length = 2000 - 3
+    if len(formatted_response) > max_length:
+        # Discordの文字数制限に収めるため切り詰める
+        truncated_length = max_length - 3
         formatted_response = formatted_response[:truncated_length] + "```"
     return formatted_response
 
@@ -196,7 +200,11 @@ async def create_a_session(interaction: discord.Interaction, prompt: str, title:
 
     message = await interaction.followup.send(f"セッションを作成しました。", wait=True)
     try:
-        thread = await message.create_thread(name=f"Session: {session_id}")
+        if not hasattr(interaction.channel, "create_thread"):
+             await interaction.followup.send("エラー: このチャンネルではスレッドを作成できません。")
+             return
+
+        thread = await interaction.channel.create_thread(name=f"Session: {session_id}", message=message)
         await thread.send(format_json_response(json_resp))
 
         # Track session for polling
@@ -205,7 +213,8 @@ async def create_a_session(interaction: discord.Interaction, prompt: str, title:
             client.active_sessions[session_id] = {"thread_id": thread.id, "last_state": state}
 
     except Exception as e:
-        await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
+        error_msg = f"スレッドの作成に失敗しました: {e}\n"
+        await interaction.followup.send(error_msg + format_json_response(json_resp, max_length=2000-len(error_msg)))
 
 @client.tree.command(name="jules-list-sessions", description="List Jules sessions")
 async def list_sessions(interaction: discord.Interaction, page_size: Optional[int] = None, page_token: Optional[str] = None):
@@ -227,7 +236,11 @@ async def get_a_session(interaction: discord.Interaction, session_id: str):
 
     message = await interaction.followup.send(f"セッション {session_id} の情報を取得しました。", wait=True)
     try:
-        thread = await message.create_thread(name=f"Session: {session_id}")
+        if not hasattr(interaction.channel, "create_thread"):
+             await interaction.followup.send("エラー: このチャンネルではスレッドを作成できません。")
+             return
+
+        thread = await interaction.channel.create_thread(name=f"Session: {session_id}", message=message)
         await thread.send(format_json_response(json_resp))
 
         # Track session for polling
@@ -236,7 +249,8 @@ async def get_a_session(interaction: discord.Interaction, session_id: str):
             client.active_sessions[session_id] = {"thread_id": thread.id, "last_state": state}
 
     except Exception as e:
-        await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
+        error_msg = f"スレッドの作成に失敗しました: {e}\n"
+        await interaction.followup.send(error_msg + format_json_response(json_resp, max_length=2000-len(error_msg)))
 
 @client.tree.command(name="jules-delete-a-session", description="Delete a specific Jules session")
 async def delete_a_session(interaction: discord.Interaction, session_id: str):
