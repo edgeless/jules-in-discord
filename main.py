@@ -3,6 +3,7 @@ import sys
 import logging
 import json
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import aiohttp
 from typing import Optional, Any, Dict, Tuple
@@ -184,12 +185,31 @@ async def jules_list_sources(interaction: discord.Interaction):
         await interaction.followup.send(format_json_response(text_data))
 
 @client.tree.command(name="jules-create-a-session", description="Create a new Jules session")
-async def create_a_session(interaction: discord.Interaction, prompt: str, title: Optional[str] = None, require_plan_approval: Optional[bool] = None):
+@app_commands.choices(automation_mode=[
+    app_commands.Choice(name="AUTO_CREATE_PR", value="AUTO_CREATE_PR"),
+    app_commands.Choice(name="MANUAL", value="MANUAL"),
+])
+async def create_a_session(
+    interaction: discord.Interaction,
+    prompt: str,
+    title: Optional[str] = None,
+    source: Optional[str] = None,
+    starting_branch: Optional[str] = None,
+    automation_mode: Optional[str] = None,
+    require_plan_approval: Optional[bool] = None
+):
     payload = {"prompt": prompt}
     if title is not None:
         payload["title"] = title
     if require_plan_approval is not None:
         payload["requirePlanApproval"] = require_plan_approval
+    if automation_mode is not None:
+        payload["automationMode"] = automation_mode
+
+    if source is not None:
+        payload["sourceContext"] = {"source": source}
+        if starting_branch is not None:
+            payload["sourceContext"]["githubRepoContext"] = {"startingBranch": starting_branch}
 
     text_data, json_resp = await make_jules_api_request(interaction, "POST", "sessions", json_data=payload)
     if json_resp is None:
