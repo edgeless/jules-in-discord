@@ -282,19 +282,6 @@ async def approve_a_plan(interaction: discord.Interaction):
     if text_data is not None:
         await interaction.followup.send(f"プランを承認しました。\n{format_json_response(text_data)}")
 
-@client.event
-async def on_message(message):
-    # bot自身や他のbotからのメッセージは無視する（無限ループ防止）
-    if message.author.bot:
-        return
-
-    # 内容が空のメッセージ（画像のみなど）は無視する
-    if not message.content:
-        return
-
-    # メッセージをそのままechoする
-    await message.channel.send(message.content)
-
 def main():
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
