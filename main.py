@@ -179,7 +179,7 @@ async def jules_list_sources(interaction: discord.Interaction):
     if text_data is not None:
         await interaction.followup.send(format_json_response(text_data))
 
-@client.tree.command(name="create-a-session", description="Create a new Jules session")
+@client.tree.command(name="jules-create-a-session", description="Create a new Jules session")
 async def create_a_session(interaction: discord.Interaction, prompt: str, title: Optional[str] = None, require_plan_approval: Optional[bool] = None):
     payload = {"prompt": prompt}
     if title is not None:
@@ -207,7 +207,7 @@ async def create_a_session(interaction: discord.Interaction, prompt: str, title:
     except Exception as e:
         await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
 
-@client.tree.command(name="list-sessions", description="List Jules sessions")
+@client.tree.command(name="jules-list-sessions", description="List Jules sessions")
 async def list_sessions(interaction: discord.Interaction, page_size: Optional[int] = None, page_token: Optional[str] = None):
     params = {}
     if page_size is not None:
@@ -219,7 +219,7 @@ async def list_sessions(interaction: discord.Interaction, page_size: Optional[in
     if text_data is not None:
         await interaction.followup.send(format_json_response(text_data))
 
-@client.tree.command(name="get-a-session", description="Get a specific Jules session")
+@client.tree.command(name="jules-get-a-session", description="Get a specific Jules session")
 async def get_a_session(interaction: discord.Interaction, session_id: str):
     text_data, json_resp = await make_jules_api_request(interaction, "GET", f"sessions/{session_id}")
     if json_resp is None:
@@ -238,7 +238,7 @@ async def get_a_session(interaction: discord.Interaction, session_id: str):
     except Exception as e:
         await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
 
-@client.tree.command(name="delete-a-session", description="Delete a specific Jules session")
+@client.tree.command(name="jules-delete-a-session", description="Delete a specific Jules session")
 async def delete_a_session(interaction: discord.Interaction, session_id: str):
     text_data, _ = await make_jules_api_request(interaction, "DELETE", f"sessions/{session_id}")
     if text_data is not None:
@@ -247,7 +247,7 @@ async def delete_a_session(interaction: discord.Interaction, session_id: str):
         if session_id in client.active_sessions:
             del client.active_sessions[session_id]
 
-@client.tree.command(name="send-a-message", description="Send a message to an active Jules session")
+@client.tree.command(name="jules-send-a-message", description="Send a message to an active Jules session")
 async def send_a_message(interaction: discord.Interaction, prompt: str):
     if not isinstance(interaction.channel, discord.Thread):
         await interaction.response.send_message("エラー: このコマンドはセッションのスレッド内でのみ実行できます。", ephemeral=True)
@@ -265,7 +265,7 @@ async def send_a_message(interaction: discord.Interaction, prompt: str):
     if text_data is not None:
         await interaction.followup.send(f"メッセージを送信しました。\n{format_json_response(text_data)}")
 
-@client.tree.command(name="approve-a-plan", description="Approve a pending plan in a Jules session")
+@client.tree.command(name="jules-approve-a-plan", description="Approve a pending plan in a Jules session")
 async def approve_a_plan(interaction: discord.Interaction):
     if not isinstance(interaction.channel, discord.Thread):
         await interaction.response.send_message("エラー: このコマンドはセッションのスレッド内でのみ実行できます。", ephemeral=True)
