@@ -56,6 +56,9 @@ class JulesBot(commands.Bot):
                 try:
                     async with session.get(url, headers=headers) as response:
                         if response.status != 200:
+                            if response.status in [401, 403, 404]:
+                                # Stop tracking if the session was deleted externally or access is denied
+                                del self.active_sessions[session_id]
                             continue
 
                         data = await response.json()
@@ -66,6 +69,16 @@ class JulesBot(commands.Bot):
 
                             # Notify the thread
                             thread = self.get_channel(info["thread_id"])
+                            if thread is None:
+                                try:
+                                    thread = await self.fetch_channel(info["thread_id"])
+                                except discord.NotFound:
+                                    # Thread deleted, stop tracking
+                                    del self.active_sessions[session_id]
+                                    continue
+                                except discord.HTTPException:
+                                    pass
+
                             if thread and isinstance(thread, discord.Thread):
                                 msg = f"セッションの状態が更新されました: **{info['last_state']}** ➡️ **{new_state}**"
                                 await thread.send(f"{msg}\n{format_json_response(data)}")
