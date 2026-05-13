@@ -1,11 +1,6 @@
-version: '3.8'
-
 services:
   discord-bot:
     build: .
     restart: unless-stopped
-    environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
-    # If you want to use an env file, you can uncomment the line below and create a .env file
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
