@@ -4,3 +4,6 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - JULES_API_KEY=${JULES_API_KEY}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID}

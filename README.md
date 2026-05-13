@@ -14,21 +14,23 @@ discordでjules連携します。
 
 1. リポジトリをクローンまたはダウンロードします。
 
-2. ルートディレクトリに `.env` ファイルを作成し、Discordのトークンを設定します。
+2. ルートディレクトリに `.env` ファイルを作成し、Discordのトークンやその他の環境変数を設定します。
    ```
    DISCORD_TOKEN=あなたのDiscordボットのトークン
+   JULES_API_KEY=あなたのJules APIキー
+   DISCORD_GUILD_ID=コマンドを登録するDiscordサーバーのID
    ```
    または、実行時に環境変数として渡すこともできます。
 
 3. Docker Composeを使用してコンテナをビルドおよび起動します。
    ```sh
    # バックグラウンドで起動する場合
-   docker compose up -d
+   docker compose up -d --build
    ```
 
    `.env` ファイルを使用しない場合は、以下のように実行します。
    ```sh
-   DISCORD_TOKEN=あなたのDiscordボットのトークン docker compose up -d
+   DISCORD_TOKEN=あなたのDiscordボットのトークン JULES_API_KEY=キー DISCORD_GUILD_ID=ID docker compose up -d --build
    ```
 
 ### 停止方法
