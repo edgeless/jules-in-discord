@@ -5,7 +5,7 @@ import json
 import discord
 from discord.ext import commands
 import aiohttp
-from typing import Optional
+from typing import Optional, Any, Dict, Tuple
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -39,162 +39,140 @@ client = JulesBot()
 async def on_ready():
     logger.info(f'We have logged in as {client.user}')
 
-def format_json_response(data: str) -> str:
-    formatted_response = f"```json\n{data}\n```"
+def format_json_response(data: Any) -> str:
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            pass
+
+    if isinstance(data, (dict, list)):
+        formatted_str = json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        formatted_str = str(data)
+
+    formatted_response = f"```json\n{formatted_str}\n```"
     if len(formatted_response) > 2000:
         truncated_length = 2000 - 3
         formatted_response = formatted_response[:truncated_length] + "```"
     return formatted_response
 
-@client.tree.command(name="jules-list-sources", description="List Jules API sources")
-async def jules_list_sources(interaction: discord.Interaction):
+async def make_jules_api_request(
+    interaction: discord.Interaction,
+    method: str,
+    endpoint: str,
+    params: Optional[Dict[str, Any]] = None,
+    json_data: Optional[Dict[str, Any]] = None
+) -> Tuple[Optional[str], Optional[Any]]:
     api_key = os.environ.get("JULES_API_KEY")
     if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
+        if not interaction.response.is_done():
+            await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
+        else:
+            await interaction.followup.send("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
+        return None, None
 
-    await interaction.response.defer()
+    if not interaction.response.is_done():
+        await interaction.response.defer()
 
-    url = "https://jules.googleapis.com/v1alpha/sources"
+    url = f"https://jules.googleapis.com/v1alpha/{endpoint}"
     headers = {"x-goog-api-key": api_key}
+    if json_data is not None:
+        headers["Content-Type"] = "application/json"
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                response.raise_for_status()
-                data = await response.text()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
-        return
+            async with session.request(method, url, headers=headers, params=params, json=json_data) as response:
+                try:
+                    response.raise_for_status()
+                except aiohttp.ClientResponseError as e:
+                    error_msg = f"APIエラー: {e.status} {e.message}"
+                    if e.status == 401:
+                        error_msg = "APIエラー: 認証に失敗しました (401)。APIキーを確認してください。"
+                    elif e.status == 404:
+                        error_msg = "APIエラー: リソースが見つかりません (404)。"
 
-    await interaction.followup.send(format_json_response(data))
+                    try:
+                        error_text = await response.text()
+                        error_msg += f"\n```json\n{error_text}\n```"
+                    except:
+                        pass
+
+                    await interaction.followup.send(error_msg[:2000])
+                    return None, None
+
+                text_data = await response.text()
+                try:
+                    json_resp = await response.json()
+                except Exception:
+                    json_resp = None
+
+                return text_data, json_resp
+    except Exception as e:
+        await interaction.followup.send(f"リクエスト送信中に予期せぬエラーが発生しました: {e}")
+        return None, None
+
+@client.tree.command(name="jules-list-sources", description="List Jules API sources")
+async def jules_list_sources(interaction: discord.Interaction):
+    text_data, _ = await make_jules_api_request(interaction, "GET", "sources")
+    if text_data is not None:
+        await interaction.followup.send(format_json_response(text_data))
 
 @client.tree.command(name="create-a-session", description="Create a new Jules session")
 async def create_a_session(interaction: discord.Interaction, prompt: str, title: Optional[str] = None, require_plan_approval: Optional[bool] = None):
-    api_key = os.environ.get("JULES_API_KEY")
-    if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
-
-    await interaction.response.defer()
-
-    url = "https://jules.googleapis.com/v1alpha/sessions"
-    headers = {
-        "x-goog-api-key": api_key,
-        "Content-Type": "application/json"
-    }
     payload = {"prompt": prompt}
     if title is not None:
         payload["title"] = title
     if require_plan_approval is not None:
         payload["requirePlanApproval"] = require_plan_approval
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as response:
-                response.raise_for_status()
-                data_text = await response.text()
-                data_json = await response.json()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
+    text_data, json_resp = await make_jules_api_request(interaction, "POST", "sessions", json_data=payload)
+    if json_resp is None:
         return
 
-    session_name = data_json.get("name", "")
-    session_id = session_name.split("/")[-1] if "/" in session_name else data_json.get("id", "unknown_id")
+    session_name = json_resp.get("name", "")
+    session_id = session_name.split("/")[-1] if "/" in session_name else json_resp.get("id", "unknown_id")
 
     message = await interaction.followup.send(f"セッションを作成しました。", wait=True)
     try:
         thread = await message.create_thread(name=f"Session: {session_id}")
-        await thread.send(format_json_response(data_text))
+        await thread.send(format_json_response(json_resp))
     except Exception as e:
-        await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(data_text)}")
+        await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
 
 @client.tree.command(name="list-sessions", description="List Jules sessions")
 async def list_sessions(interaction: discord.Interaction, page_size: Optional[int] = None, page_token: Optional[str] = None):
-    api_key = os.environ.get("JULES_API_KEY")
-    if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
-
-    await interaction.response.defer()
-
-    url = "https://jules.googleapis.com/v1alpha/sessions"
-    headers = {"x-goog-api-key": api_key}
     params = {}
     if page_size is not None:
         params["pageSize"] = page_size
     if page_token is not None:
         params["pageToken"] = page_token
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, params=params) as response:
-                response.raise_for_status()
-                data = await response.text()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
-        return
-
-    await interaction.followup.send(format_json_response(data))
+    text_data, json_resp = await make_jules_api_request(interaction, "GET", "sessions", params=params)
+    if text_data is not None:
+        await interaction.followup.send(format_json_response(text_data))
 
 @client.tree.command(name="get-a-session", description="Get a specific Jules session")
 async def get_a_session(interaction: discord.Interaction, session_id: str):
-    api_key = os.environ.get("JULES_API_KEY")
-    if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
-
-    await interaction.response.defer()
-
-    url = f"https://jules.googleapis.com/v1alpha/sessions/{session_id}"
-    headers = {"x-goog-api-key": api_key}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                response.raise_for_status()
-                data_text = await response.text()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
+    text_data, json_resp = await make_jules_api_request(interaction, "GET", f"sessions/{session_id}")
+    if json_resp is None:
         return
 
     message = await interaction.followup.send(f"セッション {session_id} の情報を取得しました。", wait=True)
     try:
         thread = await message.create_thread(name=f"Session: {session_id}")
-        await thread.send(format_json_response(data_text))
+        await thread.send(format_json_response(json_resp))
     except Exception as e:
-        await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(data_text)}")
+        await interaction.followup.send(f"スレッドの作成に失敗しました: {e}\n{format_json_response(json_resp)}")
 
 @client.tree.command(name="delete-a-session", description="Delete a specific Jules session")
 async def delete_a_session(interaction: discord.Interaction, session_id: str):
-    api_key = os.environ.get("JULES_API_KEY")
-    if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
-
-    await interaction.response.defer()
-
-    url = f"https://jules.googleapis.com/v1alpha/sessions/{session_id}"
-    headers = {"x-goog-api-key": api_key}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.delete(url, headers=headers) as response:
-                response.raise_for_status()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
-        return
-
-    await interaction.followup.send(f"セッション {session_id} を削除しました。")
+    text_data, _ = await make_jules_api_request(interaction, "DELETE", f"sessions/{session_id}")
+    if text_data is not None:
+        await interaction.followup.send(f"セッション {session_id} を削除しました。")
 
 @client.tree.command(name="send-a-message", description="Send a message to an active Jules session")
 async def send_a_message(interaction: discord.Interaction, prompt: str):
-    api_key = os.environ.get("JULES_API_KEY")
-    if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
-
-    # Check if executed in a thread
     if not isinstance(interaction.channel, discord.Thread):
         await interaction.response.send_message("エラー: このコマンドはセッションのスレッド内でのみ実行できます。", ephemeral=True)
         return
@@ -205,36 +183,14 @@ async def send_a_message(interaction: discord.Interaction, prompt: str):
         return
 
     session_id = thread_name.replace("Session: ", "").strip()
-
-    await interaction.response.defer()
-
-    url = f"https://jules.googleapis.com/v1alpha/sessions/{session_id}:sendMessage"
-    headers = {
-        "x-goog-api-key": api_key,
-        "Content-Type": "application/json"
-    }
     payload = {"prompt": prompt}
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as response:
-                response.raise_for_status()
-                data_text = await response.text()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
-        return
-
-    await interaction.followup.send(f"メッセージを送信しました。\n{format_json_response(data_text)}")
-
+    text_data, json_resp = await make_jules_api_request(interaction, "POST", f"sessions/{session_id}:sendMessage", json_data=payload)
+    if text_data is not None:
+        await interaction.followup.send(f"メッセージを送信しました。\n{format_json_response(text_data)}")
 
 @client.tree.command(name="approve-a-plan", description="Approve a pending plan in a Jules session")
 async def approve_a_plan(interaction: discord.Interaction):
-    api_key = os.environ.get("JULES_API_KEY")
-    if not api_key:
-        await interaction.response.send_message("エラー: JULES_API_KEY が設定されていません。", ephemeral=True)
-        return
-
-    # Check if executed in a thread
     if not isinstance(interaction.channel, discord.Thread):
         await interaction.response.send_message("エラー: このコマンドはセッションのスレッド内でのみ実行できます。", ephemeral=True)
         return
@@ -246,33 +202,21 @@ async def approve_a_plan(interaction: discord.Interaction):
 
     session_id = thread_name.replace("Session: ", "").strip()
 
-    await interaction.response.defer()
-
-    url = f"https://jules.googleapis.com/v1alpha/sessions/{session_id}:approvePlan"
-    headers = {
-        "x-goog-api-key": api_key,
-        "Content-Type": "application/json"
-    }
-    payload = {}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as response:
-                response.raise_for_status()
-                data_text = await response.text()
-    except Exception as e:
-        await interaction.followup.send(f"APIリクエスト中にエラーが発生しました: {e}")
-        return
-
-    await interaction.followup.send(f"プランを承認しました。\n{format_json_response(data_text)}")
-
+    text_data, json_resp = await make_jules_api_request(interaction, "POST", f"sessions/{session_id}:approvePlan", json_data={})
+    if text_data is not None:
+        await interaction.followup.send(f"プランを承認しました。\n{format_json_response(text_data)}")
 
 @client.event
 async def on_message(message):
+    # bot自身や他のbotからのメッセージは無視する（無限ループ防止）
     if message.author.bot:
         return
+
+    # 内容が空のメッセージ（画像のみなど）は無視する
     if not message.content:
         return
+
+    # メッセージをそのままechoする
     await message.channel.send(message.content)
 
 def main():
